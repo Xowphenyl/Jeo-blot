@@ -3,7 +3,7 @@
  * Preventing TS checks with files presented in the video for a better presentation.
  */
 import type { Message } from 'ai';
-import React, { type RefCallback, useEffect, useState } from 'react';
+import React, { type RefCallback, useEffect, useState, useCallback } from 'react';
 import { ClientOnly } from 'remix-utils/client-only';
 import { Menu } from '~/components/sidebar/Menu.client';
 import { IconButton } from '~/components/ui/IconButton';
@@ -15,6 +15,8 @@ import { SendButton } from './SendButton.client';
 import { APIKeyManager } from './APIKeyManager';
 import Cookies from 'js-cookie';
 import * as Tooltip from '@radix-ui/react-tooltip';
+import { useSpeechRecognition, SUPPORTED_LANGUAGES } from './hooks/useSpeechRecognition';
+import { toast } from 'sonner';
 
 import styles from './BaseChat.module.scss';
 import { ExportChatButton } from '~/components/chat/chatExportAndImport/ExportChatButton';
@@ -109,117 +111,39 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     });
     const [modelList, setModelList] = useState(MODEL_LIST);
     const [isModelSettingsCollapsed, setIsModelSettingsCollapsed] = useState(false);
-    const [isListening, setIsListening] = useState(false);
-    const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
-    const [transcript, setTranscript] = useState('');
 
-    useEffect(() => {
-      console.log(transcript);
-    }, [transcript]);
-
-    useEffect(() => {
-      // Load API keys from cookies on component mount
-      try {
-        const storedApiKeys = Cookies.get('apiKeys');
-
-        if (storedApiKeys) {
-          const parsedKeys = JSON.parse(storedApiKeys);
-
-          if (typeof parsedKeys === 'object' && parsedKeys !== null) {
-            setApiKeys(parsedKeys);
-          }
+    const handleTranscriptChange = useCallback(
+      (transcript: string) => {
+        if (handleInputChange) {
+          const syntheticEvent = {
+            target: { value: transcript },
+          } as React.ChangeEvent<HTMLTextAreaElement>;
+          handleInputChange(syntheticEvent);
         }
-      } catch (error) {
-        console.error('Error loading API keys from cookies:', error);
+      },
+      [handleInputChange],
+    );
 
-        // Clear invalid cookie data
-        Cookies.remove('apiKeys');
-      }
-
-      let providerSettings: Record<string, IProviderSetting> | undefined = undefined;
-
-      try {
-        const savedProviderSettings = Cookies.get('providers');
-
-        if (savedProviderSettings) {
-          const parsedProviderSettings = JSON.parse(savedProviderSettings);
-
-          if (typeof parsedProviderSettings === 'object' && parsedProviderSettings !== null) {
-            providerSettings = parsedProviderSettings;
-          }
-        }
-      } catch (error) {
-        console.error('Error loading Provider Settings from cookies:', error);
-
-        // Clear invalid cookie data
-        Cookies.remove('providers');
-      }
-
-      initializeModelList(providerSettings).then((modelList) => {
-        setModelList(modelList);
-      });
-
-      if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-
-        recognition.onresult = (event) => {
-          const transcript = Array.from(event.results)
-            .map((result) => result[0])
-            .map((result) => result.transcript)
-            .join('');
-
-          setTranscript(transcript);
-
-          if (handleInputChange) {
-            const syntheticEvent = {
-              target: { value: transcript },
-            } as React.ChangeEvent<HTMLTextAreaElement>;
-            handleInputChange(syntheticEvent);
-          }
-        };
-
-        recognition.onerror = (event) => {
-          console.error('Speech recognition error:', event.error);
-          setIsListening(false);
-        };
-
-        setRecognition(recognition);
-      }
-    }, []);
-
-    const startListening = () => {
-      if (recognition) {
-        recognition.start();
-        setIsListening(true);
-      }
-    };
-
-    const stopListening = () => {
-      if (recognition) {
-        recognition.stop();
-        setIsListening(false);
-      }
-    };
+    const {
+      isListening,
+      startListening,
+      stopListening,
+      permissionState,
+      audioLevel,
+      currentLanguage,
+      supportedLanguages,
+      changeLanguage,
+    } = useSpeechRecognition({
+      onTranscriptChange: handleTranscriptChange,
+      language: 'en-US',
+    });
 
     const handleSendMessage = (event: React.UIEvent, messageInput?: string) => {
       if (sendMessage) {
         sendMessage(event, messageInput);
 
-        if (recognition) {
-          recognition.abort(); // Stop current recognition
-          setTranscript(''); // Clear transcript
-          setIsListening(false);
-
-          // Clear the input by triggering handleInputChange with empty value
-          if (handleInputChange) {
-            const syntheticEvent = {
-              target: { value: '' },
-            } as React.ChangeEvent<HTMLTextAreaElement>;
-            handleInputChange(syntheticEvent);
-          }
+        if (isListening) {
+          stopListening();
         }
       }
     };
@@ -509,6 +433,11 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                         onStart={startListening}
                         onStop={stopListening}
                         disabled={isStreaming}
+                        permissionState={permissionState}
+                        audioLevel={audioLevel}
+                        currentLanguage={currentLanguage}
+                        supportedLanguages={supportedLanguages}
+                        onLanguageChange={changeLanguage}
                       />
                       {chatStarted && <ClientOnly>{() => <ExportChatButton exportChat={exportChat} />}</ClientOnly>}
                       <IconButton
